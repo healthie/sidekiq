@@ -8,6 +8,10 @@ module Sidekiq
   module RedisConnection
     class << self
       def create(options = {})
+        if !::Rails.env.local? && (options[:url].blank? || options[:url].include?('localhost'))
+          raise "Sidekiq.redis is accessed before the initializer for sidekiq ran, url: #{options[:url].inspect}"
+        end
+
         symbolized_options = deep_symbolize_keys(options)
         symbolized_options[:url] ||= determine_redis_provider
         symbolized_options[:password] = wrap(symbolized_options[:password]) if symbolized_options.key?(:password)
