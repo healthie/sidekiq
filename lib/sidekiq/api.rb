@@ -17,12 +17,37 @@ require "sidekiq/metrics/query"
 #
 
 module Sidekiq
+  module ApiUtils
+    # @api private
+    # Calculate the latency in seconds for a job based on its enqueued timestamp
+    # @param job [Hash] the job hash
+    # @return [Float] latency in seconds
+    def calculate_latency(job)
+      timestamp = job["enqueued_at"] || job["created_at"]
+      return 0.0 unless timestamp
+
+      if timestamp.is_a?(Float)
+        # old format
+        Time.now.to_f - timestamp
+      else
+        now = ::Process.clock_gettime(::Process::CLOCK_REALTIME, :millisecond)
+        (now - timestamp) / 1000.0
+      end
+    end
+  end
+
   # Retrieve runtime statistics from Redis regarding
   # this Sidekiq cluster.
   #
   #   stat = Sidekiq::Stats.new
   #   stat.processed
   class Stats
+    QueueSummary = Data.define(:name, :size, :latency, :paused) do
+      alias_method :paused?, :paused
+    end
+
+    include ApiUtils
+
     def initialize
       fetch_stats_fast!
     end
@@ -63,6 +88,7 @@ module Sidekiq
       stat :default_queue_latency
     end
 
+    # @return [Hash{String => Integer}] a hash of queue names to their lengths
     def queues
       Sidekiq.redis do |conn|
         queues = conn.sscan("queues").to_a
@@ -75,6 +101,41 @@ module Sidekiq
 
         array_of_arrays = queues.zip(lengths).sort_by { |_, size| -size }
         array_of_arrays.to_h
+      end
+    end
+
+    # More detailed information about each queue: name, size, latency, paused status
+    # @return [Array<QueueSummary>]
+    def queue_summaries
+      Sidekiq.redis do |conn|
+        queues = conn.sscan("queues").to_a
+        return [] if queues.empty?
+
+        results = conn.pipelined { |pipeline|
+          queues.each do |queue|
+            pipeline.llen("queue:#{queue}")
+            pipeline.lindex("queue:#{queue}", -1)
+            pipeline.sismember("paused", queue)
+          end
+        }
+
+        queue_summaries = []
+        queues.each_with_index do |name, idx|
+          size = results[idx * 3]
+          last_item = results[idx * 3 + 1]
+          paused = results[idx * 3 + 2] > 0
+
+          latency = if last_item
+            job = Sidekiq.load_json(last_item)
+            calculate_latency(job)
+          else
+            0.0
+          end
+
+          queue_summaries << QueueSummary.new(name:, size:, latency:, paused:)
+        end
+
+        queue_summaries.sort_by { |qd| -qd.size }
       end
     end
 
@@ -100,19 +161,7 @@ module Sidekiq
           {}
         end
 
-        enqueued_at = job["enqueued_at"]
-        if enqueued_at
-          if enqueued_at.is_a?(Float)
-            # old format
-            now = Time.now.to_f
-            now - enqueued_at
-          else
-            now = ::Process.clock_gettime(::Process::CLOCK_REALTIME, :millisecond)
-            (now - enqueued_at) / 1000.0
-          end
-        else
-          0.0
-        end
+        calculate_latency(job)
       else
         0.0
       end
@@ -235,6 +284,7 @@ module Sidekiq
   #   end
   class Queue
     include Enumerable
+    include ApiUtils
 
     ##
     # Fetch all known queues within Redis.
@@ -245,6 +295,7 @@ module Sidekiq
     end
 
     attr_reader :name
+    alias_method :id, :name
 
     # @param name [String] the name of the queue
     def initialize(name = "default")
@@ -277,19 +328,7 @@ module Sidekiq
       return 0.0 unless entry
 
       job = Sidekiq.load_json(entry)
-      enqueued_at = job["enqueued_at"]
-      if enqueued_at
-        if enqueued_at.is_a?(Float)
-          # old format
-          now = Time.now.to_f
-          now - enqueued_at
-        else
-          now = ::Process.clock_gettime(::Process::CLOCK_REALTIME, :millisecond)
-          (now - enqueued_at) / 1000.0
-        end
-      else
-        0.0
-      end
+      calculate_latency(job)
     end
 
     def each
@@ -352,6 +391,8 @@ module Sidekiq
   # The job should be considered immutable but may be
   # removed from the queue via JobRecord#delete.
   class JobRecord
+    include ApiUtils
+
     # the parsed Hash of job data
     # @!attribute [r] Item
     attr_reader :item
@@ -478,17 +519,7 @@ module Sidekiq
     end
 
     def latency
-      timestamp = @item["enqueued_at"] || @item["created_at"]
-      if timestamp
-        if timestamp.is_a?(Float)
-          # old format
-          Time.now.to_f - timestamp
-        else
-          (::Process.clock_gettime(::Process::CLOCK_REALTIME, :millisecond) - timestamp) / 1000.0
-        end
-      else
-        0.0
-      end
+      calculate_latency(@item)
     end
 
     # Remove this job from the queue
@@ -553,15 +584,22 @@ module Sidekiq
   # could be the scheduled time for it to run (e.g. scheduled set),
   # or the expiration date after which the entry should be deleted (e.g. dead set).
   class SortedEntry < JobRecord
-    attr_reader :score
     attr_reader :parent
 
     # :nodoc:
     # @api private
     def initialize(parent, score, item)
       super(item)
-      @score = Float(score)
+      @score = score
       @parent = parent
+    end
+
+    def score
+      Float(@score)
+    end
+
+    def id
+      "#{@score}|#{item["jid"]}"
     end
 
     # The timestamp associated with this entry
@@ -574,7 +612,7 @@ module Sidekiq
       if @value
         @parent.delete_by_value(@parent.name, @value)
       else
-        @parent.delete_by_jid(score, jid)
+        @parent.delete_by_jid(@score, jid)
       end
     end
 
@@ -583,7 +621,7 @@ module Sidekiq
     # @param at [Time] the new timestamp for this job
     def reschedule(at)
       Sidekiq.redis do |conn|
-        conn.zincrby(@parent.name, at.to_f - @score, Sidekiq.dump_json(@item))
+        conn.zincrby(@parent.name, at.to_f - score, Sidekiq.dump_json(@item))
       end
     end
 
@@ -619,38 +657,8 @@ module Sidekiq
 
     private
 
-    def remove_job
-      Sidekiq.redis do |conn|
-        results = conn.multi { |transaction|
-          transaction.zrange(parent.name, score, score, "BYSCORE")
-          transaction.zremrangebyscore(parent.name, score, score)
-        }.first
-
-        if results.size == 1
-          yield results.first
-        else
-          # multiple jobs with the same score
-          # find the one with the right JID and push it
-          matched, nonmatched = results.partition { |message|
-            if message.index(jid)
-              msg = Sidekiq.load_json(message)
-              msg["jid"] == jid
-            else
-              false
-            end
-          }
-
-          msg = matched.first
-          yield msg if msg
-
-          # push the rest back onto the sorted set
-          conn.multi do |transaction|
-            nonmatched.each do |message|
-              transaction.zadd(parent.name, score.to_f.to_s, message)
-            end
-          end
-        end
-      end
+    def remove_job(&)
+      parent.remove_job(self, &)
     end
   end
 
@@ -817,6 +825,46 @@ module Sidekiq
         end
       end
       nil
+    end
+
+    def remove_job(entry)
+      score = entry.score
+      jid = entry.jid
+      Sidekiq.redis do |conn|
+        results = conn.multi { |transaction|
+          transaction.zrange(name, score, score, "BYSCORE")
+          transaction.zremrangebyscore(name, score, score)
+        }.first
+
+        if results.size == 1
+          yield results.first
+          @_size -= 1
+        else
+          # multiple jobs with the same score
+          # find the one with the right JID and push it
+          matched, nonmatched = results.partition { |message|
+            if message.index(jid)
+              msg = Sidekiq.load_json(message)
+              msg["jid"] == jid
+            else
+              false
+            end
+          }
+
+          msg = matched.first
+          if msg
+            yield msg
+            @_size -= 1
+          end
+
+          # push the rest back onto the sorted set
+          conn.multi do |transaction|
+            nonmatched.each do |message|
+              transaction.zadd(name, score.to_f.to_s, message)
+            end
+          end
+        end
+      end
     end
 
     # :nodoc:
@@ -992,19 +1040,20 @@ module Sidekiq
         # you'll be happier this way
         conn.pipelined do |pipeline|
           procs.each do |key|
-            pipeline.hmget(key, "info", "busy", "beat", "quiet", "rss", "rtt_us")
+            pipeline.hmget(key, "info", "concurrency", "busy", "beat", "quiet", "rss", "rtt_us")
           end
         end
       }
 
-      result.each do |info, busy, beat, quiet, rss, rtt_us|
+      result.each do |info, concurrency, busy, beat, quiet, rss, rtt_us|
         # If a process is stopped between when we query Redis for `procs` and
         # when we query for `result`, we will have an item in `result` that is
         # composed of `nil` values.
         next if info.nil?
 
         hash = Sidekiq.load_json(info)
-        yield Process.new(hash.merge("busy" => busy.to_i,
+        yield Process.new(hash.merge("concurrency" => concurrency.to_i,
+          "busy" => busy.to_i,
           "beat" => beat.to_f,
           "quiet" => quiet,
           "rss" => rss.to_i,
@@ -1088,6 +1137,7 @@ module Sidekiq
     def identity
       self["identity"]
     end
+    alias_method :id, :identity
 
     # deprecated, use capsules below
     def queues
@@ -1159,6 +1209,10 @@ module Sidekiq
     # @return [Boolean] true if this process is quiet or shutting down
     def stopping?
       self["quiet"] == "true"
+    end
+
+    def leader?
+      Sidekiq.redis { |c| c.get("dear-leader") == identity }
     end
 
     private

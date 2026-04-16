@@ -18,17 +18,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ruby: ["ruby-3.2", "ruby-3.3", "ruby-3.4"]
-        rails: ["7.1", "8"] # we test latest and earliest supported versions
+        # we test latest and earliest supported versions
+        # to minimize our build matrix
+        ruby: ["ruby-3.2", "ruby-4.0"]
+        rails: ["7.1", "8.1"]
         database: [
           { image: "redis", version: "7.0.15" },
           { image: "redis", version: "latest" },
-          { image: "valkey/valkey", version: "8" },
+          { image: "valkey/valkey", version: "9" },
           { image: "docker.dragonflydb.io/dragonflydb/dragonfly", version: "latest" }
         ]
 
     env:
       RAILS_VERSION: ${{ matrix.rails }}
+
+    services:
+      redis:
+        image: ${{ matrix.database.image }}:${{ matrix.database.version }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping || exit 1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
 
     steps:
     - uses: actions/checkout@v6
@@ -38,12 +51,6 @@ jobs:
       with:
         bundler-cache: true
         ruby-version: ${{ matrix.ruby }}
-
-    - name: Start Redis
-      uses: supercharge/redis-github-action@1.8.1
-      with:
-        redis-image: ${{ matrix.database.image }}
-        redis-version: ${{ matrix.database.version }}
 
     - name: Lint ERB files with HERB
       run: bundle exec rake lint:herb

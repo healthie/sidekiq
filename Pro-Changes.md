@@ -4,6 +4,28 @@
 
 Please see [sidekiq.org](https://sidekiq.org/) for more details and how to buy.
 
+HEAD
+---------
+
+- Add new `autoflush` mode to Batches to flush every N jobs. [#6967]
+  The `jobs` block collects all jobs for the Batch and pushes them
+  all atomically at the same time but this can use a massive amount of
+  memory if your batch has millions of jobs. Enabling autoflush will
+  push every N collected jobs but will lose the atomicity.
+```ruby
+b = Sidekiq::Batch.new
+b.autoflush = 1000 # flush to Redis every 1000 jobs
+b.jobs do
+  # push tons of jobs
+end
+```
+
+8.1.1
+---------
+
+- Interrupted iterable job should not trigger :complete callback [#6889]
+- Support for `kiq`
+
 8.1.0
 ---------
 
@@ -72,6 +94,12 @@ batch.on(:success, ..., {tags: ["batchtype:OrderProcess"]})
 - Sidekiq::Web internal refactoring [#6532]
 - Atomic scheduler performance tuning [#6609]
 - Discard poison pill jobs with `dead: false` [#6628]
+
+7.3.7
+---------
+
+- Fix iterable job interruption within batch triggering premature :complete callback [#6889]
+- Fix super_fetch orphan recovery on Dragonfly
 
 7.3.6
 ---------

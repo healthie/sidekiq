@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "uri"
-require "yaml"
 require "cgi/escape"
 
 module Sidekiq
@@ -73,10 +72,40 @@ module Sidekiq
       # so extensions can be localized
       @@strings[lang] ||= config.locales.each_with_object({}) do |path, global|
         find_locale_files(lang).each do |file|
-          strs = YAML.safe_load_file(file)
+          strs = parse_yaml_new(file)
           global.merge!(strs[lang])
         end
       end
+    end
+
+    def parse_yaml_old(path)
+      require "yaml"
+      YAML.safe_load_file(path)
+    end
+
+    def parse_yaml_new(path)
+      locale = nil
+      map = {}
+      IO.readlines(path, chomp: true).each do |line|
+        case line
+        when /\A\s*\#.*/
+          # line comment
+        when !locale && /\A([a-zA-Z\-_]+):/
+          locale = $1
+          map[locale] = {}
+        when /\A\s+(\w+):\s+(.+)\z/
+          # A few values have double quotes to include special characters in YAML.
+          # Strip them off manually as our greedy match will include them.
+          key = $1
+          s = $2
+          s = s[1..] if s[0] == "\""
+          s = s[0..-2] if s[-1] == "\""
+          map[locale][key] = s
+        else
+          raise ArgumentError, "unable to parse #{path}: #{line}"
+        end
+      end
+      map
     end
 
     def to_json(x)
@@ -285,6 +314,17 @@ module Sidekiq
     def relative_time(time)
       stamp = time.getutc.iso8601
       %(<time class="ltr" dir="ltr" title="#{stamp}" datetime="#{stamp}">#{time}</time>)
+    end
+
+    def queue_names_by_capsule(pro)
+      cap = pro.capsules
+      if cap
+        cap.map { |k, v| v["weights"].keys.join(", ") }.join("; ")
+      else
+        # DEPRECATED Backwards compatibility with older processes.
+        # 'capsules' element added in v8.0.9
+        pro.queues.join(", ")
+      end
     end
 
     def job_params(job, score)

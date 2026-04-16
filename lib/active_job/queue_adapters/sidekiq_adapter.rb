@@ -61,18 +61,21 @@ begin
 
         # @api private
         def enqueue(job)
-          job.provider_job_id = Sidekiq::ActiveJob::Wrapper.set(
-            wrapped: job.class,
-            queue: job.queue_name
-          ).perform_async(job.serialize)
+          # NB: Active Job only serializes keys it recognizes. We
+          # cannot set arbitrary key/values here.
+          options = {wrapped: job.class, queue: job.queue_name}
+          options[:profile] = job.profile if job.respond_to?(:profile) && !job.profile.nil?
+
+          wrapper = Sidekiq::ActiveJob::Wrapper.set(options)
+          job.provider_job_id = wrapper.perform_async(job.serialize)
         end
 
         # @api private
         def enqueue_at(job, timestamp)
-          job.provider_job_id = Sidekiq::ActiveJob::Wrapper.set(
-            wrapped: job.class,
-            queue: job.queue_name
-          ).perform_at(timestamp, job.serialize)
+          options = {wrapped: job.class, queue: job.queue_name}
+          options[:profile] = job.profile if job.respond_to?(:profile) && !job.profile.nil?
+
+          job.provider_job_id = Sidekiq::ActiveJob::Wrapper.set(options).perform_at(timestamp, job.serialize)
         end
 
         # @api private

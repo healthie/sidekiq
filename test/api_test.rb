@@ -140,6 +140,33 @@ describe "API" do
       end
     end
 
+    describe "queue_summaries" do
+      it "returns an object with queue name, size, latency, and paused status" do
+        @cfg.redis do |conn|
+          conn.rpush "queue:foo", "{\"enqueued_at\": #{(Time.now.to_f * 1000 - 50).floor}}"
+          conn.sadd "queues", ["foo"]
+          conn.sadd "paused", ["bar"]
+
+          3.times { conn.rpush "queue:bar", "{\"enqueued_at\": #{(Time.now.to_f * 1000 - 100).floor}}" }
+          conn.sadd "queues", ["bar"]
+        end
+
+        result = Sidekiq::Stats.new.queue_summaries
+
+        assert_equal 2, result.length
+
+        assert_equal "bar", result[0].name
+        assert_equal 3, result[0].size
+        assert_in_delta 0.10, result[0].latency, 0.01
+        assert_equal true, result[0].paused?
+
+        assert_equal "foo", result[1].name
+        assert_equal 1, result[1].size
+        assert_in_delta 0.05, result[1].latency, 0.01
+        assert_equal false, result[1].paused?
+      end
+    end
+
     describe "enqueued" do
       it "handles latency for good jobs" do
         @cfg.redis do |conn|
@@ -370,6 +397,18 @@ describe "API" do
       refute_nil Sidekiq::ScheduledSet.new.find_job(remain_id)
     end
 
+    it "can enqueue many pages of jobs when paginated" do
+      jids = Sidekiq::Client.push_bulk("class" => ApiJob,
+        "args" => Array.new(200) { [] },
+        "at" => Time.now.to_f)
+
+      assert_equal 200, jids.size
+      ss = Sidekiq::ScheduledSet.new
+      assert_equal 200, ss.size
+      ss.each(&:add_to_queue)
+      assert_equal 0, ss.size
+    end
+
     it "can kill a scheduled job" do
       job_id = ApiJob.perform_in(100, 1, '{"foo":123}')
       job = Sidekiq::ScheduledSet.new.find_job(job_id)
@@ -577,6 +616,31 @@ describe "API" do
       signals_string = "#{odata["key"]}-signals"
       assert_equal "TERM", @cfg.redis { |c| c.lpop(signals_string) }
       assert_equal "TSTP", @cfg.redis { |c| c.lpop(signals_string) }
+    end
+
+    it "reads process concurrency from redis hash fields" do
+      identity_string = "identity_string"
+      odata = {
+        "pid" => 123,
+        "hostname" => Socket.gethostname,
+        "key" => identity_string,
+        "identity" => identity_string,
+        "started_at" => Time.now.to_f - 15,
+        "concurrency" => 99,
+        "capsules" => {"default" => {"mode" => "weighted", "concurrency" => 5, "weights" => {"foo" => 1, "bar" => 1}}},
+        "version" => Sidekiq::VERSION,
+        "embedded" => false
+      }
+
+      @cfg.redis do |conn|
+        conn.multi do |transaction|
+          transaction.sadd("processes", [odata["key"]])
+          transaction.hset(odata["key"], "info", Sidekiq.dump_json(odata), "concurrency", 7, "busy", 10, "beat", Time.now.to_f)
+        end
+      end
+
+      pro = Sidekiq::ProcessSet.new.to_a.first
+      assert_equal 7, pro["concurrency"]
     end
 
     it "can find processes" do

@@ -2,6 +2,45 @@
 
 [Sidekiq Changes](https://github.com/sidekiq/sidekiq/blob/main/Changes.md) | [Sidekiq Pro Changes](https://github.com/sidekiq/sidekiq/blob/main/Pro-Changes.md) | [Sidekiq Enterprise Changes](https://github.com/sidekiq/sidekiq/blob/main/Ent-Changes.md)
 
+8.1.3
+----------
+
+- Fix edge case leading to duplicate, concurrent execution [#6379]
+  If 2 Capsules process jobs from the same queue, long-running
+  jobs could run in parallel during process shutdown.
+- [SECURITY] Remove as much YAML usage as possible. [#6950]
+  Localization files in `web/locales` are now manually parsed.
+  Sidekiq::CLI will now only require YAML if you use a `-C` .yml file.
+
+8.1.2
+----------
+
+- Initial release for `kiq`, Sidekiq's official terminal UI:
+```
+bundle exec kiq
+```
+Use REDIS_URL or REDIS_PROVIDER to point `kiq` to Redis.
+- Mutation during iteration in `SortedSet#each` caused it to miss half of the jobs [#6936]
+- Fix edge case resulting in nil crash on /busy page [#6954]
+
+8.1.1
+----------
+
+- **DEPRECATION** `require 'sidekiq/testing'` and
+  `require 'sidekiq/testing/inline'`.
+  Add new `Sidekiq.testing!(mode)` API [#6931]
+  Requiring code should not enable process-wide changes.
+```ruby
+# Old, implicit
+require "sidekiq/testing"
+require "sidekiq/testing/inline"
+# New, more explicit
+Sidekiq.testing!(:fake)
+Sidekiq.testing!(:inline)
+```
+- Fix race condition with Stop button in UI [#6935]
+- Fix javascript error handler [#6893]
+
 8.1.0
 ----------
 
