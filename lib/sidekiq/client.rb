@@ -117,6 +117,11 @@ module Sidekiq
     # larger than 1000 but YMMV based on network quality, size of job args, etc.
     # A large number of jobs can cause a bit of Redis command processing latency.
     #
+    # Accepts an `:at` option to schedule the jobs for future execution. It
+    # accepts either a single Numeric timestamp (or seconds-from-now) applied
+    # to every job, or an Array of Numeric values with the same size as `args`
+    # to schedule each job at its corresponding time.
+    #
     # Accepts an additional `:spread_interval` option (in seconds) to randomly spread
     # the jobs schedule times over the specified interval.
     #
@@ -137,9 +142,6 @@ module Sidekiq
       raise ArgumentError, "Job 'at' must be a Numeric or an Array of Numeric timestamps" if at && (Array(at).empty? || !Array(at).all? { |entry| entry.is_a?(Numeric) })
       raise ArgumentError, "Job 'at' Array must have same size as 'args' Array" if at.is_a?(Array) && at.size != args.size
 
-      # Use a smaller batch size by default for scheduled jobs since adding to sorted sets is more costly.
-      batch_size = items.delete(:batch_size) || items.delete("batch_size") || (at ? 100 : 1_000)
-
       jid = items.delete("jid")
       raise ArgumentError, "Explicitly passing 'jid' when pushing more than one job is not supported" if jid && args.size > 1
 
@@ -153,6 +155,9 @@ module Sidekiq
         now = Time.now.to_f
         at = args.map { now + rand * spread_interval }
       end
+
+      # Use a smaller batch size by default for scheduled jobs since adding to sorted sets is more costly.
+      batch_size = items.delete(:batch_size) || items.delete("batch_size") || (at ? 100 : 1_000)
 
       normed = normalize_item(items)
       slice_index = 0

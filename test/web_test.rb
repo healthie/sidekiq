@@ -86,28 +86,53 @@ describe Sidekiq::Web do
   end
 
   describe "busy" do
-    it "renders without error when requesting a page beyond available workers" do
-      get "/busy?page=99"
-      assert_equal 200, last_response.status
-    end
-
-    it "can display workers" do
+    before do
+      @jid = SecureRandom.hex(12)
       @config.redis do |conn|
         conn.incr("busy")
         conn.sadd("processes", ["foo:1234"])
         conn.hset("foo:1234", "info", Sidekiq.dump_json("hostname" => "foo", "started_at" => Time.now.to_f, "capsules" => {}, "concurrency" => 10), "at", Time.now.to_f, "busy", 4)
         identity = "foo:1234:work"
-        hash = {queue: "critical", payload: Sidekiq.dump_json({"class" => WebJob.name, "args" => [1, "abc"], "tags" => %w[foobar_100 <eviltag/>]}), run_at: Time.now.to_i}
+        hash = {queue: "critical", payload: Sidekiq.dump_json({"class" => WebJob.name, "args" => [1, "abc"], "jid" => @jid, "tags" => %w[foobar_100 <eviltag/>]}), run_at: Time.now.to_i}
         conn.hset(identity, 1001, Sidekiq.dump_json(hash))
       end
+      add_iteration_state(@jid, cursor: {"offset" => 500}, executions: 7)
+    end
+
+    it "renders without error when requesting a page beyond available workers" do
+      get "/busy?page=99"
+      assert_equal 200, last_response.status
+    end
+
+    it "renders only jobs" do
+      get "/busy?only=jobs"
+      assert_equal 200, last_response.status
+      assert_match(/WebJob/, last_response.body)
+    end
+
+    it "renders only processes" do
+      get "/busy?only=processes"
+      assert_equal 200, last_response.status
+      refute_match(/WebJob/, last_response.body)
+    end
+
+    it "can display workers" do
       assert_equal ["1001"], Sidekiq::WorkSet.new.map { |pid, tid, data| tid }
 
       get "/busy"
       assert_equal 200, last_response.status
       assert_match(/critical/, last_response.body)
       assert_match(/WebJob/, last_response.body)
+      assert_match(/#{@jid}/, last_response.body)
       assert_match(/jobtag-foobar_100/, last_response.body)
       assert_match(/jobtag-&lt;eviltag\/&gt;/, last_response.body)
+      assert_match(/offset/, last_response.body)
+      assert_match(/exec=7/, last_response.body)
+    end
+
+    it "does not crash on a negative count parameter" do
+      get "/busy?count=-1"
+      assert_equal 200, last_response.status
     end
 
     it "can quiet all processes" do
@@ -331,6 +356,18 @@ describe Sidekiq::Web do
     assert_equal 200, last_response.status
     refute_match(/found/, last_response.body)
     assert_match(/HardJob/, last_response.body)
+  end
+
+  it "displays iteration state on retry detail page" do
+    jid = SecureRandom.hex(12)
+    params = add_retry(jid)
+    add_iteration_state(jid, cursor: {"id" => 42}, executions: 3, runtime: 12.345)
+
+    get "/retries/#{job_params(*params)}"
+    assert_equal 200, last_response.status
+    assert_match(/Iteration/, last_response.body)
+    assert_match(/cursor=/, last_response.body)
+    assert_match(/exec=3/, last_response.body)
   end
 
   it "displays custom job info" do
@@ -851,6 +888,7 @@ describe Sidekiq::Web do
     msg = {"class" => "HardJob",
            "args" => ["bob", 1, Time.now.to_f],
            "jid" => jid,
+           "queue" => "default",
            "tags" => ["tag1", "tag2"]}
     @config.redis do |conn|
       conn.zadd("schedule", score, Sidekiq.dump_json(msg))
@@ -898,6 +936,12 @@ describe Sidekiq::Web do
       conn.zadd("dead", score, job)
     end
     [job, score]
+  end
+
+  def add_iteration_state(jid, cursor: {"id" => 42}, executions: 3, runtime: 12.345)
+    @config.redis do |conn|
+      conn.hset("it-#{jid}", "ex", executions, "c", Sidekiq.dump_json(cursor), "rt", runtime)
+    end
   end
 
   def add_xss_retry(job_id = SecureRandom.hex(12))
