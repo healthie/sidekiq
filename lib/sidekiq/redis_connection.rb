@@ -11,7 +11,7 @@ module Sidekiq
         if !::Rails.env.local? && (options[:url].blank? || options[:url].include?('localhost'))
           # stderr is unbuffered, so the line survives a child that dies right after the raise.
           $stderr.puts "sidekiq-redis-early-access pid=#{Process.pid} prog=#{$PROGRAM_NAME} " \
-            "server=#{Sidekiq.server?} rails_initialized=#{::Rails.application&.initialized?.inspect} " \
+            "server=#{!!Sidekiq.server?} rails_initialized=#{::Rails.application&.initialized?.inspect} " \
             "url=#{options[:url].inspect}\n#{caller.join("\n")}"
           raise "Sidekiq.redis is accessed before the initializer for sidekiq ran, url: #{options[:url].inspect}"
         end
