@@ -1,5 +1,6 @@
 <section>
   <header>
+    <% @page_title = "#{t('ScheduledJobs')} (#{@total_size})" %>
     <h1><%= t('ScheduledJobs') %></h1>
     <% if @scheduled.size > 0 && @total_size > @count %>
       <%= erb :_paging, locals: { url: "#{root_path}scheduled" } %>
@@ -39,7 +40,7 @@
                 <a href="<%= root_path %>queues/<%= CGI.escape(entry.queue) %>"><%= h entry.queue %></a>
               </td>
               <td>
-                <%= entry.display_class %>
+                <%= h entry.display_class %>
                 <%= display_tags(entry, "scheduled") %>
               </td>
               <td>

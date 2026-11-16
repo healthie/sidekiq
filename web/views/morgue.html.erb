@@ -1,5 +1,6 @@
 <section>
   <header>
+    <% @page_title = "#{t('DeadJobs')} (#{@total_size})" %>
     <h1><%= t('DeadJobs') %></h1>
     <% if @dead.size > 0 && @total_size > @count %>
       <%= erb :_paging, locals: { url: "#{root_path}morgue" } %>
@@ -40,7 +41,7 @@
                 <a href="<%= root_path %>queues/<%= CGI.escape(entry.queue) if entry.queue %>"><%= h entry.queue %></a>
               </td>
               <td>
-                <%= entry.display_class %>
+                <%= h entry.display_class %>
                 <%= display_tags(entry, "morgue") %>
               </td>
               <td>

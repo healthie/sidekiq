@@ -41,7 +41,10 @@ module Sidekiq
         symbolized_options[:timeout] ||= 3
 
         redis_config = Sidekiq::RedisClientAdapter.new(symbolized_options)
-        ConnectionPool.new(timeout: pool_timeout, size: size) do
+        # Only the main Ractor can fork, and connection_pool's fork registry
+        # is a non-shareable constant other Ractors can't touch.
+        main = Ractor.current == Ractor.main
+        ConnectionPool.new(timeout: pool_timeout, size: size, auto_reload_after_fork: main) do
           redis_config.new_client
         end
       end
@@ -78,23 +81,29 @@ module Sidekiq
         # unable to safely dump.
         keys = options.keys - [:logger, :ssl_params, :password, :sentinel_password]
         scrubbed_options = Marshal.load(Marshal.dump(options.slice(*keys)))
-        if scrubbed_options[:url] && (uri = URI.parse(scrubbed_options[:url])) && uri.password
-          uri.password = redacted
-          scrubbed_options[:url] = uri.to_s
-        end
+        scrubbed_options[:url] = redact_uri(scrubbed_options[:url], redacted) if scrubbed_options[:url]
         scrubbed_options[:password] = redacted if options.key?(:password)
         scrubbed_options[:sentinel_password] = redacted if options.key?(:sentinel_password)
         scrubbed_options[:sentinels]&.each do |sentinel|
           if sentinel.is_a?(String)
-            if (uri = URI(sentinel)) && uri.password
-              uri.password = redacted
-              sentinel.replace(uri.to_s)
-            end
+            sentinel.replace(redact_uri(sentinel, redacted))
           elsif sentinel[:password]
             sentinel[:password] = redacted
           end
         end
         scrubbed_options
+      end
+
+      # Replace the password in a Redis URL. A URL which can't be parsed may
+      # still hold a password, so it is redacted completely rather than letting
+      # URI::InvalidURIError (which quotes the URL) escape.
+      def redact_uri(url, redacted)
+        uri = URI.parse(url)
+        return url unless uri.password
+        uri.password = redacted
+        uri.to_s
+      rescue URI::InvalidURIError
+        redacted
       end
 
       def determine_redis_provider

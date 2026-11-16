@@ -27,7 +27,7 @@ module Sidekiq
         if (unsafe_item = json_unsafe?(args))
           msg = <<~EOM
             Job arguments to #{job_class} must be native JSON types, but #{unsafe_item.inspect} is a #{unsafe_item.class}.
-            See https://github.com/sidekiq/sidekiq/wiki/Best-Practices
+            See https://sidekiq.org/wiki/Best-Practices
             To disable this error, add `Sidekiq.strict_args!(false)` to your initializer.
           EOM
 
@@ -79,7 +79,12 @@ module Sidekiq
 
     RECURSIVE_JSON_UNSAFE = {
       Integer => ->(val) {},
-      Float => ->(val) {},
+      Float => ->(val) {
+        # JSON does not allow NaN / Infinity; reject them so strict_args!
+        # raises ArgumentError instead of a cryptic JSON::GeneratorError later.
+        return val unless val.finite?
+        nil
+      },
       TrueClass => ->(val) {},
       FalseClass => ->(val) {},
       NilClass => ->(val) {},

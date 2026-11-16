@@ -85,7 +85,7 @@ module Sidekiq # :nodoc:
 
           WARNING: Your Redis instance will evict Sidekiq data under heavy load.
           The 'noeviction' maxmemory policy is recommended (current policy: '#{maxmemory_policy}').
-          See: https://github.com/sidekiq/sidekiq/wiki/Using-Redis#memory
+          See: https://sidekiq.org/wiki/Using-Redis#memory
 
         EOM
       end
@@ -144,7 +144,7 @@ module Sidekiq # :nodoc:
 
     HOLIDAY_COLORS = {
       # got other color-specific holidays from around the world?
-      # https://developer-book.com/post/definitive-guide-for-colored-text-in-terminal/#256-color-escape-codes
+      # https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit
       "3-17" => "\e[1;32m", # St. Patrick's Day green
       "10-31" => "\e[38;5;208m" # Halloween orange
     }

@@ -240,7 +240,12 @@ describe "Web helpers" do
   describe "#filter_link" do
     it "escapes the value and wraps it in a filter link by default" do
       obj = Helpers.new
-      assert_equal "<a href='/retries?substr=ab&lt;c'>ab&lt;c</a>", obj.filter_link("ab<c")
+      assert_equal "<a href='/retries?substr=ab%3Cc'>ab&lt;c</a>", obj.filter_link("ab<c")
+    end
+
+    it "URL encodes the value in the link" do
+      obj = Helpers.new
+      assert_equal "<a href='/morgue?substr=a%26b+c%2B%2B%23x'>a&amp;b c++#x</a>", obj.filter_link("a&b c++#x", "morgue")
     end
 
     it "returns only the escaped value when within is nil" do
@@ -255,7 +260,7 @@ describe "Web helpers" do
       job = Struct.new(:tags).new(["a<b"])
       result = obj.display_tags(job)
       assert_includes result, "jobtag-a&lt;b"
-      assert_includes result, "substr=a&lt;b"
+      assert_includes result, "substr=a%3Cb"
     end
   end
 
@@ -339,7 +344,9 @@ describe "Web helpers" do
 
       assert_equal false, obj.pollable?
     end
+  end
 
+  describe "#parse_yaml" do
     it "can parse locale files" do
       obj = Helpers.new
       Dir["web/locales/*.yml"].each do |path|
@@ -350,6 +357,21 @@ describe "Web helpers" do
           assert_equal expected, got
         end
       end
+    end
+
+    it "can parse locale files when the external encoding is not UTF-8" do
+      obj = Helpers.new
+      previous = Encoding.default_external
+      verbose = $VERBOSE
+      $VERBOSE = false # setting default_external warns
+      Encoding.default_external = Encoding::US_ASCII
+
+      parsed = obj.parse_yaml("web/locales/en.yml")
+
+      assert_equal YAML.safe_load_file("web/locales/en.yml")["en"], parsed["en"]
+    ensure
+      Encoding.default_external = previous
+      $VERBOSE = verbose
     end
   end
 end

@@ -17,10 +17,11 @@ Gem::Specification.new do |gem|
   gem.metadata = {
     "homepage_uri" => "https://sidekiq.org",
     "bug_tracker_uri" => "https://github.com/sidekiq/sidekiq/issues",
-    "documentation_uri" => "https://github.com/sidekiq/sidekiq/wiki",
+    "documentation_uri" => "https://sidekiq.org/wiki",
     "changelog_uri" => "https://github.com/sidekiq/sidekiq/blob/main/Changes.md",
     "source_code_uri" => "https://github.com/sidekiq/sidekiq",
-    "rubygems_mfa_required" => "true"
+    "rubygems_mfa_required" => "true",
+    "mailing_list_uri" => "https://www.rubyforum.org/tag/sidekiq"
   }
 
   gem.add_dependency "redis-client", ">= 0.29.0"

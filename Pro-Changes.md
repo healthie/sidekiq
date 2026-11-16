@@ -4,6 +4,23 @@
 
 Please see [sidekiq.org](https://sidekiq.org/) for more details and how to buy.
 
+HEAD
+---------
+
+- Throttle batch-died cleanup [#7080]
+
+8.1.6
+---------
+
+- Ephemeral (discarded if they fail all retries, `dead: false`) jobs were not discarded if they behaved as poison pills, leading to job accumulation in Redis [#7063]
+- Tune the bulk scheduled job push within batches to avoid SLOWLOG entries
+
+8.1.5
+---------
+
+- Coerce batch created_at to integer [#7049]
+- Fix incorrect batch total job count when using autoflush, thx Teddy!
+
 8.1.4
 ---------
 

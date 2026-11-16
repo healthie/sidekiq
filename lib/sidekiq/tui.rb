@@ -60,12 +60,14 @@ module Sidekiq
       track_fps do
         if @showing == :main
           @tui.draw do |frame|
+            # Borders take 2 columns, and 2 rows along with the footer line.
+            control_rows = current_tab.control_rows(frame.area.width - 4)
             main_area, controls_area = @tui.layout_split(
               frame.area,
               direction: :vertical,
               constraints: [
                 @tui.constraint_fill(1),
-                @tui.constraint_length(5)
+                @tui.constraint_length([control_rows.size, 2].max + 3)
               ]
             )
 
@@ -91,7 +93,7 @@ module Sidekiq
             frame.render_widget(tabs, tabs_area)
 
             render_content_area(frame, content_area)
-            render_controls(frame, controls_area)
+            render_controls(frame, controls_area, control_rows)
           end
         end
 
@@ -105,31 +107,40 @@ module Sidekiq
                 @tui.constraint_length(4)
               ]
             )
-            content = @tui.block(
-              title: " #{Sidekiq::NAME} ",
-              borders: [:all],
-              title_style: @tui.style(fg: :light_red, modifiers: [:bold]),
-              children: [
-                # TODO convert to table
-                @tui.paragraph(
-                  text: [
-                    @tui.text_line(spans: ["Welcome to the Sidekiq Terminal UI"], alignment: :center),
-                    @tui.text_line(spans: [
-                      @tui.text_span(content: "Global hotkeys")
-                    ]),
-                    @tui.text_line(spans: []),
-                    hotkey_line("Esc", "Close this window"),
-                    hotkey_line("←/→", "Move between tabs"),
-                    hotkey_line("h/l", "Move to prev/next page of data"),
-                    hotkey_line("j/k", "Move to prev/next row in current page"),
-                    hotkey_line("x", "Select/deselect current row"),
-                    hotkey_line("A", "Select/deselect All rows in current page"),
-                    hotkey_line("q", "Quit")
-                  ]
-                )
-              ]
+
+            help_data = [
+              ["Esc", "Close this window"],
+              ["←/→", "Move between tabs"],
+              ["h/l", "Move to prev/next page of data"],
+              ["j/k", "Move to prev/next row in current page"],
+              ["x", "Select/deselect current row"],
+              ["A", "Select/deselect All rows in current page"],
+              ["q", "Quit"]
+            ]
+
+            # striped styling like other tables in the app
+            help_rows = help_data.map.with_index { |cells, idx|
+              @tui.table_row(
+                cells: cells,
+                style: idx.even? ? nil : @tui.style(bg: :dark_gray)
+              )
+            }
+
+            table = @tui.table(
+              block: @tui.block(
+                title: " #{Sidekiq::NAME} - Welcome to the Sidekiq Terminal UI ",
+                borders: [:all],
+                title_style: @tui.style(fg: :light_red, modifiers: [:bold])
+              ),
+              header: ["Key", "Action"],
+              rows: help_rows,
+              widths: [
+                @tui.constraint_length(15),
+                @tui.constraint_fill(1)
+              ],
+              column_spacing: 1
             )
-            frame.render_widget(content, main_area)
+            frame.render_widget(table, main_area)
             controls = @tui.block(
               title: t("Controls"),
               borders: [:all],
@@ -151,20 +162,12 @@ module Sidekiq
       current_tab.render(@tui, frame, content_area)
     end
 
-    def render_controls(frame, area)
-      active_keys = current_tab.controls.filter { |hash| hash[:description] }
+    def render_controls(frame, area, control_rows)
+      lines = control_rows.map { |keys| controls_line(keys) }
 
-      # Split controls into two lines, 8 is arbitrary
-      # TODO Dynamically split based on term width?
-      first = active_keys[...8]
-      lines = []
-      lines << controls_line(first)
-
-      last = active_keys[8...]
-      lines << if last && last.size > 0
-        controls_line(last)
-      else
-        @tui.text_line(spans: [])
+      # Ensure we have at least 2 lines for layout consistency
+      while lines.length < 2
+        lines << @tui.text_line(spans: [])
       end
 
       footer = [

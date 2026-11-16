@@ -81,7 +81,7 @@ module Sidekiq
     def parse_yaml(path)
       locale = nil
       map = {}
-      IO.readlines(path, chomp: true).each do |line|
+      IO.readlines(path, chomp: true, encoding: "UTF-8").each do |line|
         case line
         when /\A\s*\#.*/
           # line comment
@@ -155,7 +155,7 @@ module Sidekiq
       if within.nil?
         hstr
       else
-        "<a href='#{root_path}#{within}?substr=#{hstr}'>#{hstr}</a>"
+        "<a href='#{root_path}#{within}?substr=#{CGI.escape(str.to_s)}'>#{hstr}</a>"
       end
     end
 
@@ -440,6 +440,19 @@ module Sidekiq
       "[#{environment.upcase}] " unless environment == "production"
     end
 
+    def active_tab?(url)
+      (url == "") ? current_path == url : current_path.start_with?(url)
+    end
+
+    # Browser tab title, e.g. "Busy (5/25) | Sidekiq". Views may set @page_title
+    # to override the default, which is the label of the active nav tab.
+    # The dashboard is the home page and gets the bare product name.
+    def page_title
+      tab = config.tabs.find { |_, url| active_tab?(url) }
+      title = @page_title || (t(tab[0]) if tab && tab[1] != "")
+      [title, Sidekiq::NAME].compact.join(" | ")
+    end
+
     def product_version
       "Sidekiq v#{Sidekiq::VERSION}"
     end
@@ -469,6 +482,15 @@ module Sidekiq
       elsif params["add_to_queue"]
         job.add_to_queue
       end
+    end
+
+    def url_count(param_name: "count", default_count: 25)
+      p = url_params(param_name)
+      if p
+        c = p.to_i
+        return c if c > 0 && c < 1000
+      end
+      default_count
     end
   end
 end

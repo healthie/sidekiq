@@ -135,6 +135,36 @@ describe Sidekiq do
     end
   end
 
+  describe "ractor support" do
+    # Ractor#value replaced Ractor#take in Ruby 3.5
+    def ractor_result(r)
+      r.respond_to?(:value) ? r.value : r.take
+    end
+
+    it "allows Redis access within a Ractor" do
+      cfg = Sidekiq::Config.new
+      pool = cfg.redis_pool
+      pool.with { |c| c.ping }
+
+      r = Ractor.new(cfg.instance_variable_get(:@redis_config)) do |cfgh|
+        po = Sidekiq::RedisConnection.create(cfgh)
+        po.with { |c| c.ping }
+      end
+      val = ractor_result(r)
+      assert_equal "PONG", val
+    end
+
+    it "allows sharing a pool with a Ractor" do
+      skip "ConnectionPool holds a Proc, Mutexes and sockets so it can't be shared across Ractors"
+      pool = Sidekiq::Config.new.redis_pool
+      r = Ractor.new(pool) do |p|
+        p.with { |c| c.ping }
+      end
+      val = ractor_result(r)
+      assert_equal "PONG", val
+    end
+  end
+
   describe "edition predicates" do
     it ".pro? / .ent? reflect whether the matching constant is defined" do
       refute defined?(Sidekiq::Pro)

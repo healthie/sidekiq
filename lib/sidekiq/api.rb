@@ -857,15 +857,17 @@ module Sidekiq
           }
 
           msg = matched.first
-          if msg
-            yield msg
-            @_size -= 1
-          end
-
-          # push the rest back onto the sorted set
-          conn.multi do |transaction|
-            nonmatched.each do |message|
-              transaction.zadd(name, score.to_f.to_s, message)
+          begin
+            if msg
+              yield msg
+              @_size -= 1
+            end
+          ensure
+            # push the rest back onto the sorted set
+            conn.multi do |transaction|
+              nonmatched.each do |message|
+                transaction.zadd(name, score.to_f.to_s, message)
+              end
             end
           end
         end
@@ -1358,7 +1360,7 @@ module Sidekiq
       @records = Sidekiq.redis do |c|
         # This throws away expired profiles
         c.zremrangebyscore("profiles", "-inf", Time.now.to_f.to_s)
-        # retreive records, newest to oldest
+        # retrieve records, newest to oldest
         c.zrange("profiles", "+inf", 0, "byscore", "rev")
       end
     end
